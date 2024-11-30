@@ -1,3 +1,0 @@
-solana==0.35.1
-spl-token
-requests
