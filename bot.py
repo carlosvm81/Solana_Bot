@@ -69,7 +69,7 @@ async def main():
     # Transferencia de prueba (opcional)
     try:
         response = await bot.transfer_tokens(
-            destination_pubkey="DIRECCION_DESTINO",
+            destination_pubkey=An1zmvLGEPczUmpbCwriYoJMeMtKLDDBPDAJCbhnzGjV,
             token_mint="MINT_DEL_TOKEN",
             amount=0.01,  # Cantidad del token
         )
