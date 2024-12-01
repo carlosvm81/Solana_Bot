@@ -1,2 +1,3 @@
 solana==0.35.1
-requests
+spl-token==2.0.0
+
