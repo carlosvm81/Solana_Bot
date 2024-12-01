@@ -1,89 +1,85 @@
-import os
-import time
-from solana.rpc.api import Client
-from solana.publickey import PublicKey
-from solana.keypair import Keypair
-from solana.transaction import Transaction
-from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.instructions import TransferParams, transfer
+import asyncio
+from solders.pubkey import Pubkey
+from solana.rpc.async_api import AsyncClient
 from solana.rpc.types import TxOpts
-import requests
+from solana.transaction import Transaction
+from solana.keypair import Keypair
+from spl.token.instructions import transfer_checked, get_account_info
+from spl.token.constants import TOKEN_PROGRAM_ID
+import os
 
-# Configuración del bot
-SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"  # Cambiar a Devnet para pruebas
-WALLET_PRIVATE_KEY = os.environ.get("WALLET_PRIVATE_KEY")  # Llave privada de Solflare
-BOT_BALANCE_THRESHOLD = 100  # Monto máximo para invertir (en SOL)
+# Configuración inicial
+RPC_ENDPOINT = "https://api.mainnet-beta.solana.com"  # Cambia a la red que uses (Mainnet, Devnet, etc.)
+WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")  # Llave privada de tu billetera en formato JSON
 
-# Cliente de Solana
-client = Client(SOLANA_RPC_URL)
+# Clase del bot
+class SolanaBot:
+    def __init__(self, rpc_endpoint, wallet_private_key):
+        self.rpc_endpoint = rpc_endpoint
+        self.wallet_keypair = Keypair.from_secret_key(bytes(eval(wallet_private_key)))
 
-# Cargar la cuenta del bot
-def load_wallet(private_key):
-    return Keypair.from_secret_key(bytes(int(x) for x in private_key.split(",")))
+    async def get_balance(self):
+        """Consulta el saldo de SOL en la cuenta del bot."""
+        async with AsyncClient(self.rpc_endpoint) as client:
+            balance = await client.get_balance(self.wallet_keypair.pubkey())
+            return balance["result"]["value"] / 1e9  # Convierte de lamports a SOL
 
-wallet = load_wallet(WALLET_PRIVATE_KEY)
+    async def transfer_tokens(self, destination_pubkey, token_mint, amount):
+        """Transfiere tokens SPL a otra cuenta."""
+        destination = Pubkey.from_string(destination_pubkey)
+        token_mint = Pubkey.from_string(token_mint)
+        
+        async with AsyncClient(self.rpc_endpoint) as client:
+            # Obtén la cuenta asociada al token
+            response = await client.get_token_accounts_by_owner(self.wallet_keypair.pubkey(), {"mint": token_mint})
+            if not response["result"]["value"]:
+                raise ValueError("La billetera no tiene una cuenta asociada para este token.")
+            
+            source_token_account = Pubkey.from_string(response["result"]["value"][0]["pubkey"])
+            
+            # Crear y enviar la transacción
+            tx = Transaction()
+            transfer_instruction = transfer_checked(
+                source=source_token_account,
+                dest=destination,
+                owner=self.wallet_keypair.pubkey(),
+                amount=int(amount * 10**6),  # Ajusta los decimales según el token
+                decimals=6,  # Decimales del token
+                mint=token_mint,
+            )
+            tx.add(transfer_instruction)
+            response = await client.send_transaction(tx, self.wallet_keypair, opts=TxOpts(skip_preflight=True))
+            return response
 
-# Obtener balance de SOL
-def get_balance(public_key):
-    balance = client.get_balance(PublicKey(public_key))["result"]["value"]
-    return balance / 1e9  # Convertir lamports a SOL
+    async def monitor_market(self):
+        """Lógica del bot para monitorizar oportunidades."""
+        while True:
+            # Aquí puedes añadir la lógica personalizada para monitorizar tokens o precios
+            print("Monitorizando el mercado...")
+            await asyncio.sleep(10)
 
-# Buscar tokens nuevos en la blockchain
-def find_new_tokens():
-    print("Buscando nuevos tokens...")
-    # Aquí, haríamos una consulta a un servicio como Serum o Raydium
-    response = requests.get("https://api.solscan.io/token?type=new&limit=10")
-    tokens = response.json()["data"]
-    return tokens
+async def main():
+    # Inicializa el bot
+    bot = SolanaBot(RPC_ENDPOINT, WALLET_PRIVATE_KEY)
 
-# Analizar un token para determinar si es prometedor
-def analyze_token(token_data):
-    # Implementar lógica para analizar un token
-    # Ejemplo: checar volumen, liquidez, holders únicos
-    volume = token_data.get("volume", 0)
-    liquidity = token_data.get("liquidity", 0)
-    holders = token_data.get("holders", 0)
-    if volume > 1000 and liquidity > 500 and holders < 1000:  # Ejemplo de filtros
-        return True
-    return False
+    # Verifica el saldo
+    balance = await bot.get_balance()
+    print(f"Saldo en SOL: {balance}")
 
-# Comprar un token
-def buy_token(token_address, amount):
-    print(f"Comprando token {token_address} por {amount} SOL...")
-    # Implementar transacción de compra en Raydium o Serum
-    pass
+    # Transferencia de prueba (opcional)
+    try:
+        response = await bot.transfer_tokens(
+            destination_pubkey="DIRECCION_DESTINO",
+            token_mint="MINT_DEL_TOKEN",
+            amount=0.01,  # Cantidad del token
+        )
+        print(f"Transacción completada: {response}")
+    except Exception as e:
+        print(f"Error en la transferencia: {e}")
 
-# Vender un token
-def sell_token(token_address, amount):
-    print(f"Vendiendo token {token_address} por {amount} SOL...")
-    # Implementar transacción de venta en Raydium o Serum
-    pass
+    # Inicia la monitorización del mercado
+    await bot.monitor_market()
 
-# Ciclo principal del bot
-def main():
-    while True:
-        try:
-            print("Revisando balance...")
-            balance = get_balance(wallet.public_key)
-            print(f"Balance actual: {balance} SOL")
-            if balance < BOT_BALANCE_THRESHOLD:
-                print("El balance es insuficiente para continuar.")
-                break
-
-            print("Buscando tokens prometedores...")
-            tokens = find_new_tokens()
-            for token in tokens:
-                if analyze_token(token):
-                    print(f"Token prometedor encontrado: {token['name']}")
-                    buy_token(token["address"], 1)  # Comprar 1 SOL de este token
-                    time.sleep(5)  # Pausar para evitar spamming
-
-            print("Esperando antes de la próxima iteración...")
-            time.sleep(60)  # Esperar 1 minuto antes de repetir
-        except Exception as e:
-            print(f"Error en el bot: {e}")
-            time.sleep(10)
-
+# Ejecuta el bot
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main())
